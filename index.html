@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Extraction Shooter Alpha</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="bunker-ui">
+        <h1>THE BUNKER</h1>
+        <p>Prepare your gear. If you die, you lose what's in your pockets!</p>
+        <div class="stash-container">
+            <h3>Permanent Stash</h3>
+            <div id="stash-grid"></div>
+        </div>
+
+        <div id="bunker-tabs">
+    <button onclick="showTab('stash')">Stash/Gear</button>
+    <button onclick="showTab('market')">Market</button>
+</div>
+
+<div id="stash-view">
+    <div id="paper-doll-container">
+        <div id="silhouette">👤</div>
+        
+        <div class="equip-slot overlay" id="slot-helmet" onclick="unequip('helmet')">
+            <span class="label">HELMET</span>
+            <div class="icon-layer"></div>
+        </div>
+        <div class="equip-slot overlay" id="slot-armor" onclick="unequip('armor')">
+            <span class="label">VEST</span>
+            <div class="icon-layer"></div>
+        </div>
+        <div class="equip-slot overlay" id="slot-weapon" onclick="unequip('weapon')">
+            <span class="label">WEAPON</span>
+            <div class="icon-layer"></div>
+        </div>
+    </div>
+    <div id="stash-grid"></div>
+</div>
+
+<div id="market-view" style="display:none;">
+    <h3>Trader</h3>
+    <div id="market-items">
+        </div>
+</div>
+        <button id="start-raid-btn">ENTER THE WASTELAND</button>
+    </div>
+
+    <div id="match-ui" style="display:none;">
+        <div id="stats">HP: <span id="hp-val">100</span> | POCKETS: <span id="pocket-count">0</span> | AMMO: <span id="ammo-val">0/0</span></div>
+        <div id="reload-container" style="display:none; width: 200px; height: 10px; background: #333; border: 1px solid #0f0; margin-top: 10px;">
+            <div id="reload-progress" style="width: 0%; height: 100%; background: #0f0;"></div>
+        </div>
+        <div id="weapon-display" style="margin-top: 10px; font-size: 1.2rem; border-left: 3px solid #0f0; padding-left: 10px;">
+                EQUIPPED: <span id="weapon-icon">👊</span> <span id="weapon-name">Fists</span>
+            </div>
+        <div id="prompt"></div>
+</div>
+    </div>
+
+    <div id="inventory-bar" style="display:none;"></div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script src="src/input.js"></script>
+    <script src="src/loot.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>
