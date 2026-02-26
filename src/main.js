@@ -3,14 +3,16 @@ const ctx = canvas.getContext('2d');
 
 let gameState = "BUNKER";
 let player = { x: 1500, y: 1500, speed: 250, pockets: [], hp: 100 };
+let scavengers = [];
 let bullets = [];
 let lastShotTime = 0;
 let reloadTimer = 0;
 const RELOAD_TIME = 2; // 2 seconds to reload
 let chests = [];
-let mapSize = 3000;
+let mapSize = 5000;
 let lastTime = performance.now();
 let terrain = [];
+let buildings = [];
 let extractZone = { x: 200, y: 200, size: 150, timer: 0 };
 let stash = JSON.parse(localStorage.getItem('permanent_stash') || "[]");
 let currency = parseInt(localStorage.getItem('currency')) || 500;
@@ -42,7 +44,7 @@ function init() {
 }
 
 function renderBunker() {
-    // 1. Update the Paper Doll (Silhouette) Slots
+    // 1. Update Gear Silhouette (Paper Doll)
     const slotTypes = ['weapon', 'armor', 'helmet'];
     slotTypes.forEach(type => {
         const slotEl = document.getElementById(`slot-${type}`);
@@ -51,25 +53,47 @@ function renderBunker() {
         const iconLayer = slotEl.querySelector('.icon-layer');
         if (gear[type]) {
             slotEl.classList.add('equipped');
-            iconLayer.innerText = gear[type].icon;
+            if (iconLayer) iconLayer.innerText = gear[type].icon;
         } else {
             slotEl.classList.remove('equipped');
-            iconLayer.innerText = "";
+            if (iconLayer) iconLayer.innerText = "";
         }
     });
 
-    // 2. Render the Stash Grid
+    // 2. Render Permanent Stash (The top grid)
     const grid = document.getElementById('stash-grid');
-    grid.innerHTML = "";
-    stash.forEach((item, index) => {
-        let slot = document.createElement('div');
-        slot.className = "item-slot";
-        slot.innerHTML = `<span>${item.icon}</span>`;
-        slot.onclick = () => equipItemFromStash(index);
-        grid.appendChild(slot);
-    });
+    if (grid) {
+        grid.innerHTML = "";
+        stash.forEach((item, index) => {
+            let slot = document.createElement('div');
+            slot.className = "item-slot";
+            slot.innerHTML = `<span>${item.icon}</span>`;
+            // Call our harmonized equip function
+            slot.onclick = () => equipItemFromStash(index);
+            grid.appendChild(slot);
+        });
+    }
 
-    // Update Money
+    // 3. Render Pockets (The bottom grid - Items for the Raid)
+    const pocketGrid = document.getElementById('pocket-grid');
+    if (pocketGrid) {
+        pocketGrid.innerHTML = "";
+        player.pockets.forEach((item, index) => {
+            let slot = document.createElement('div');
+            slot.className = "item-slot";
+            slot.innerHTML = `<span>${item.icon}</span>`;
+            // Click to move back to stash
+            slot.onclick = () => {
+                stash.push(player.pockets[index]);
+                player.pockets.splice(index, 1);
+                saveData();
+                renderBunker();
+            };
+            pocketGrid.appendChild(slot);
+        });
+    }
+
+    // 4. Update Money
     document.querySelectorAll('.currency-display').forEach(el => {
         el.innerText = currency;
     });
@@ -79,22 +103,37 @@ function equipItemFromStash(index) {
     let item = stash[index];
     let slot = "";
 
-    // Determine which slot it belongs in
-    if (item.type === 'weapon') slot = 'weapon';
-    else if (item.type === 'armor') {
-        // Distinguish between Helmet and Vest
+    // 1. Identify the slot based on item properties
+    if (item.type === 'weapon') {
+        // If hands are empty, equip it. If hands are full, try putting it in pockets.
+        if (!gear.weapon) {
+            slot = 'weapon';
+        } else {
+            slot = ""; // Force it to the "else" (pockets) logic below
+        }
+    } else if (item.type === 'armor') {
         slot = item.name.toLowerCase().includes('helmet') ? 'helmet' : 'armor';
     }
 
+    // 2. Logic for Gear vs. Pockets
     if (slot) {
-        // If something is already there, put it back in stash
-        if (gear[slot]) stash.push(gear[slot]);
-        
+        // It's a Gear piece (Weapon/Armor/Helmet)
+        if (gear[slot]) stash.push(gear[slot]); // Return current gear to stash
         gear[slot] = item;
         stash.splice(index, 1);
-        saveData();
-        renderBunker();
+    } else {
+        // This handles secondary weapons AND ammo/junk
+        // It's a Pocket item (Ammo, Junk, etc.)
+        if (player.pockets.length < 12) {
+            player.pockets.push(item);
+            stash.splice(index, 1);
+        } else {
+            alert("Pockets are full!");
+        }
     }
+
+    saveData();
+    renderBunker();
 }
 
 function renderMarket() {
@@ -110,9 +149,11 @@ function renderMarket() {
                 currency -= item.value;
                 // Add currentAmmo so it's not undefined
                 let newItem = { ...item, itemId: key, id: Math.random() };
+
+                // Ensure the gun is loaded upon purchase
                 if (newItem.type === 'weapon') newItem.currentAmmo = newItem.magSize;
 
-                stash.push({ ...item, itemId: key, id: Math.random() });
+                stash.push(newItem);
                 saveData();
                 renderBunker();
                 renderMarket();
@@ -127,7 +168,6 @@ function startMatch() {
     generateTerrain();
 
     // Reset player state for the new match
-    player.pockets = [];
     player.x = 1500; player.y = 1500;
     bullets = [];
     chests = [];
@@ -135,11 +175,44 @@ function startMatch() {
     // Ensure the HUD starts clean
     updatePocketsUI(); // This will refresh the pocket count and icons
     updateAmmoUI();
+    updateEquippedUI();
 
     // Create loot boxes
-    for(let i=0; i<30; i++) {
-        chests.push({ x: Math.random()*mapSize, y: Math.random()*mapSize, item: generateRandomItem(), looted: false });
+    for(let i=0; i<40; i++) {
+    let spawnX, spawnY;
+    
+    if (Math.random() > 0.3 && buildings.length > 0) {
+        // 70% chance to spawn loot INSIDE or NEAR a building
+        let b = buildings[Math.floor(Math.random() * buildings.length)];
+        // Padding of 10px ensures it's not touching the walls
+        spawnX = b.x + 10 + Math.random() * (b.w - 30);
+        spawnY = b.y + 10 + Math.random() * (b.h - 30);
+    } else {
+        // 30% chance to spawn in the wild
+        spawnX = Math.random() * mapSize;
+        spawnY = Math.random() * mapSize;
     }
+    
+    chests.push({ 
+        x: spawnX, 
+        y: spawnY, 
+        item: generateRandomItem(), 
+        looted: false 
+    });
+
+    scavengers = []; // Clear any old enemies from previous matches
+    
+    // Spawn 15 scavengers near random loot chests
+    for (let i = 0; i < 15; i++) {
+        if (chests.length > 0) {
+            let chest = chests[Math.floor(Math.random() * chests.length)];
+            // Create a new Scavenger at the chest location
+            scavengers.push(new Scavenger(chest.x + 50, chest.y + 50));
+        }
+    }
+
+}
+
     document.getElementById('bunker-ui').style.display = 'none';
     document.getElementById('match-ui').style.display = 'block';
     document.getElementById('inventory-bar').style.display = 'flex';
@@ -183,6 +256,62 @@ function update(dt) {
     player.x += Input.moveX * player.speed * dt;
     player.y += Input.moveY * player.speed * dt;
 
+    // Update AI behavior
+    scavengers.forEach((s) => {
+        s.update(dt, player); // Runs the Patrol/Chase/Attack logic
+    });
+
+    scavengers.forEach((s, sIdx) => {
+    s.update(dt, player);
+    
+    // Check if PLAYER bullets hit this Scavenger
+    bullets.forEach((b, bIdx) => {
+        if (!b.owner && Math.hypot(b.x - s.x, b.y - s.y) < 20) {
+            s.hp -= 20; // Scavenger takes damage
+            bullets.splice(bIdx, 1); // Remove bullet
+            if (s.hp <= 0) {
+                // Drop their loot where they died
+                chests.push({ x: s.x, y: s.y, item: s.loot, looted: false });
+                scavengers.splice(sIdx, 1);
+            }
+        }
+    });
+});
+
+// Check if ENEMY bullets hit the player
+bullets.forEach((b, bIdx) => {
+    if (b.owner === "ENEMY" && Math.hypot(b.x - player.x, b.y - player.y) < 20) {
+        player.hp -= 10;
+        bullets.splice(bIdx, 1);
+        document.getElementById('hp-val').innerText = player.hp;
+        if (player.hp <= 0) finishMatch(false); // Die and lose gear
+    }
+});
+
+    // Building collision
+    buildings.forEach(b => {
+    // Optimization: only check buildings near the player
+    if (Math.hypot(b.x + b.w/2 - player.x, b.y + b.h/2 - player.y) < 800) {
+        b.walls.forEach(w => {
+            const pR = 15; // Player half-width
+            if (player.x + pR > w.x && player.x - pR < w.x + w.w &&
+                player.y + pR > w.y && player.y - pR < w.y + w.h) {
+                
+                let overlapL = (player.x + pR) - w.x;
+                let overlapR = (w.x + w.w) - (player.x - pR);
+                let overlapT = (player.y + pR) - w.y;
+                let overlapB = (w.y + w.h) - (player.y - pR);
+
+                let min = Math.min(overlapL, overlapR, overlapT, overlapB);
+                if (min === overlapL) player.x = w.x - pR;
+                else if (min === overlapR) player.x = w.x + w.w + pR;
+                else if (min === overlapT) player.y = w.y - pR;
+                else if (min === overlapB) player.y = w.y + w.h + pR;
+            }
+        });
+    }
+});
+
     // 3. SHOOTING (Only if NOT reloading)
     if (Input.isFiring && gear.weapon && reloadTimer <= 0) {
         let now = Date.now();
@@ -214,6 +343,14 @@ function update(dt) {
             document.getElementById('prompt').innerText = "NO AMMO IN POCKETS";
         }
         Input.keys['r'] = false; // Reset key
+    }
+
+    // 3. Quick Weapon Swap (Press Q)
+    if (Input.keys['q']) {
+        switchWeapon();
+        updateEquippedUI();
+        updateAmmoUI();
+        Input.keys['q'] = false; // Prevent rapid-fire switching
     }
 
     // 5. PROJECTILES & INTERACTIONS
@@ -283,26 +420,21 @@ function completeReload() {
     updateAmmoUI();
 }
 
+// Updates the Numbers (Bullets)
 function updateAmmoUI() {
     const ammoVal = document.getElementById('ammo-val');
-    const weaponIcon = document.getElementById('weapon-icon');
-    const weaponName = document.getElementById('weapon-name');
+    if (!ammoVal) return;
 
     if (gear.weapon) {
-        if (weaponIcon) weaponIcon.innerText = gear.weapon.icon;
-        if (weaponName) weaponName.innerText = gear.weapon.name;
-        
         let reserve = player.pockets
             .filter(i => i.type === 'ammo' && i.ammoType === gear.weapon.ammoType)
             .reduce((sum, stack) => sum + (stack.count || 0), 0);
         
-        // Use magSize as a fallback if currentAmmo is missing
+        // Handle cases where currentAmmo might be missing initially
         let current = gear.weapon.currentAmmo !== undefined ? gear.weapon.currentAmmo : gear.weapon.magSize;
-        if (ammoVal) ammoVal.innerText = `${current} / ${reserve}`;
+        ammoVal.innerText = `${current} / ${reserve}`;
     } else {
-        if (weaponIcon) weaponIcon.innerText = "👊";
-        if (weaponName) weaponName.innerText = "Fists";
-        if (ammoVal) ammoVal.innerText = "0 / 0";
+        ammoVal.innerText = "0 / 0";
     }
 }
 
@@ -315,6 +447,7 @@ function checkInteractions(dt) {
             if(Input.keys['e']) {
                 player.pockets.push(c.item);
                 updateAmmoUI();
+                updateEquippedUI();
                 
                 // AUTO-EQUIP: If we have no weapon, equip this pick-up immediately
                 if (c.item.type === 'weapon' && !gear.weapon) {
@@ -325,6 +458,7 @@ function checkInteractions(dt) {
                 c.looted = true;
                 updatePocketsUI();
                 updateAmmoUI()
+                updateEquippedUI();
             }
         }
     });
@@ -358,33 +492,93 @@ function switchWeapon() {
         }
         updatePocketsUI();
         updateAmmoUI();
+        updateEquippedUI();
         document.getElementById('prompt').innerText = `SWITCHED TO ${gear.weapon.name}`;
+    } else {
+        document.getElementById('prompt').innerText = "NO SECONDARY WEAPON";
     }
 }
 
+// Updates the HUD (Icon/Name)
 function updateEquippedUI() {
     const iconEl = document.getElementById('weapon-icon');
     const nameEl = document.getElementById('weapon-name');
     
-    if (gear.weapon) {
-        iconEl.innerText = gear.weapon.icon;
-        nameEl.innerText = gear.weapon.name;
-    } else {
-        iconEl.innerText = "👊";
-        nameEl.innerText = "Fists";
+    if (iconEl && nameEl) {
+        iconEl.innerText = gear.weapon ? gear.weapon.icon : "👊";
+        nameEl.innerText = gear.weapon ? gear.weapon.name : "Fists";
     }
 }
 
 function updatePocketsUI() {
-    document.getElementById('pocket-count').innerText = player.pockets.length;
-    const bar = document.getElementById('inventory-bar');
-    bar.innerHTML = "";
-    player.pockets.forEach(item => {
-        let slot = document.createElement('div');
-        slot.className = "item-slot";
-        slot.innerText = item.icon;
-        bar.appendChild(slot);
-    });
+    // 1. Existing count logic
+    const pocketCountEl = document.getElementById('pocket-count');
+    if (pocketCountEl) {
+        pocketCountEl.innerText = player.pockets.length;
+    }
+
+    // 2. Visual Item Bar Logic
+    const barEl = document.getElementById('inventory-bar');
+    if (barEl) {
+        barEl.innerHTML = ""; // Clear old icons
+        
+        player.pockets.forEach((item, index) => {
+            let slot = document.createElement('div');
+            
+            // Syntax check: Use a white border for weapons (secondary) 
+            // and green for everything else
+            const isWeapon = item.type === 'weapon';
+            
+            slot.style.cssText = `
+                background: ${isWeapon ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.5)'};
+                border: 1px solid ${isWeapon ? '#fff' : '#0f0'};
+                padding: 4px 8px;
+                border-radius: 3px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
+                min-width: 30px;
+                height: 30px;
+            `;
+            
+            slot.innerHTML = `<span>${item.icon}</span>`;
+            barEl.appendChild(slot);
+
+            // ADDED: Right-click to drop the item
+        slot.oncontextmenu = (e) => {
+            e.preventDefault(); // Prevents the browser's default menu from popping up
+            dropItem(index);
+        };
+        
+        slot.title = "Right-click to drop"; // Helpful hint for players
+        barEl.appendChild(slot);
+        });
+    }
+}
+
+function dropItem(index) {
+    if (player.pockets[index]) {
+        let item = player.pockets[index];
+        
+        // Create a new "chest" object at player's location
+        // but mark it as a 'dropped' type so we know to use the icon
+        chests.push({
+            x: player.x,
+            y: player.y,
+            item: item,
+            looted: false,
+            isDropped: true 
+        });
+
+        // Remove from pockets
+        player.pockets.splice(index, 1);
+        
+        // Update UI
+        updatePocketsUI();
+        updateAmmoUI(); // Update in case you dropped your current ammo type
+        document.getElementById('prompt').innerText = "DROPPED " + item.name;
+    }
 }
 
 function finishMatch(success) {
@@ -402,51 +596,175 @@ function finishMatch(success) {
 function draw() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    
     ctx.save();
+
+    // Camera follow logic
     ctx.translate(canvas.width/2 - player.x, canvas.height/2 - player.y);
+    
+    // 1. Draw Map & Terrain
     ctx.fillStyle = "#2b2620";
     ctx.fillRect(0, 0, mapSize, mapSize);
+    
+    // Draw Roads
     ctx.fillStyle = "#333333";
     ctx.fillRect(0, mapSize/2 - 100, mapSize, 200);
     ctx.fillRect(mapSize/2 - 100, 0, 200, mapSize);
+    
     terrain.forEach(patch => {
         ctx.fillStyle = patch.color;
         ctx.fillRect(patch.x, patch.y, patch.w, patch.h);
     });
-    chests.forEach(c => { if(!c.looted) { ctx.font = "24px Arial"; ctx.fillText("📦", c.x-12, c.y+10); } });
-    // Draw Player
-ctx.fillStyle = "#0f0"; 
-ctx.fillRect(player.x-15, player.y-15, 30, 30);
-    ctx.fillStyle = "yellow"; bullets.forEach(b => ctx.fillRect(b.x-2, b.y-2, 4, 4));
-    // Draw Helmet if equipped
-if (gear.helmet) {
-    ctx.fillStyle = "#555";
-    ctx.fillRect(player.x-10, player.y-20, 20, 10); 
-}
 
-// Draw "Gun" indicator if a weapon is equipped
-if (gear.weapon) {
-    ctx.fillStyle = "#fff";
-    // Draws a small white rectangle pointing toward the mouse
-    let gunAngle = Math.atan2(Input.y - canvas.height/2, Input.x - canvas.width/2);
-    ctx.save();
-    ctx.translate(player.x, player.y);
-    ctx.rotate(gunAngle);
-    ctx.fillRect(15, -2, 15, 4); 
+    // 2. Extraction Zone
+    ctx.strokeStyle = extractZone.timer > 0 ? "#f0f" : "#0ff";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(extractZone.x, extractZone.y, extractZone.size, extractZone.size);
+
+    // 3. Buildings (Internal Walls and Floors)
+    buildings.forEach(b => {
+    // Floor first
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+
+    // Then all wall segments
+    ctx.fillStyle = "#555"; 
+    if (b.walls) {
+        b.walls.forEach(w => {
+            ctx.fillRect(w.x, w.y, w.w, w.h);
+        });
+    }
+});
+
+    // 4. Draw chests/loot
+    chests.forEach(c => {
+        if (!c.looted) {
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            if (c.item && c.item.icon) {
+                ctx.fillText(c.item.icon, c.x, c.y + 10);
+            } else {
+                ctx.fillText("📦", c.x, c.y + 10);
+            }
+        }
+    });
+    
+    // 5. Draw Player
+    ctx.fillStyle = "#0f0"; 
+    ctx.fillRect(player.x-15, player.y-15, 30, 30);
+
+    // Draw all active scavengers
+    scavengers.forEach(s => {
+        s.draw(ctx); // Renders the red square and health bar
+    });
+
+    // 6. Draw Equipment (Helmet/Armor)
+    if (gear.helmet) {
+        ctx.fillStyle = "#555";
+        ctx.fillRect(player.x-10, player.y-20, 20, 10); 
+    }
+    if (gear.armor) {
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(player.x-10, player.y-10, 20, 20);
+    }
+
+    // 7. Draw Gun
+    if (gear.weapon) {
+        ctx.fillStyle = "#fff";
+        let gunAngle = Math.atan2(Input.y - canvas.height/2, Input.x - canvas.width/2);
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.rotate(gunAngle);
+        ctx.fillRect(15, -2, 15, 4); 
+        ctx.restore();
+    }
+
+    // 8. Draw bullets
+    ctx.fillStyle = "yellow"; 
+    bullets.forEach(b => ctx.fillRect(b.x-2, b.y-2, 4, 4));
+
     ctx.restore();
 }
-ctx.restore();
+
+
+function generateBuildingInternals(b) {
+    const thickness = 10;
+    const doorSize = 80; // Slightly wider for easier entry
+    b.walls = [];
+
+    // 1. OUTER SHELL - Ensuring multiple entry points
+    // Top wall with door
+    b.walls.push({ x: b.x, y: b.y, w: (b.w * 0.3), h: thickness });
+    b.walls.push({ x: b.x + (b.w * 0.3) + doorSize, y: b.y, w: b.w - (b.w * 0.3) - doorSize, h: thickness });
+    
+    // Bottom wall (Solid)
+    b.walls.push({ x: b.x, y: b.y + b.h - thickness, w: b.w, h: thickness });
+    
+    // Left wall with side door
+    b.walls.push({ x: b.x, y: b.y, w: thickness, h: (b.h * 0.4) });
+    b.walls.push({ x: b.x, y: b.y + (b.h * 0.4) + doorSize, w: thickness, h: b.h - (b.h * 0.4) - doorSize });
+    
+    // Right wall (Solid)
+    b.walls.push({ x: b.x + b.w - thickness, y: b.y, w: thickness, h: b.h });
+
+    // 2. ASYMMETRICAL INTERNAL ROOMS
+    // We pick a random split point between 30% and 70% of the building width/height
+    const splitX = b.x + (b.w * (0.3 + Math.random() * 0.4));
+    const splitY = b.y + (b.h * (0.3 + Math.random() * 0.4));
+
+    // Vertical Divider (with internal door)
+    b.walls.push({ x: splitX, y: b.y, w: thickness, h: (splitY - b.y) - (doorSize/2) });
+    b.walls.push({ x: splitX, y: splitY + (doorSize/2), w: thickness, h: (b.y + b.h) - (splitY + doorSize/2) });
+
+    // Horizontal Divider (to one side only, creating a "L" shaped corridor or large room)
+    if (Math.random() > 0.5) {
+        b.walls.push({ x: b.x, y: splitY, w: (splitX - b.x) - (doorSize/2), h: thickness });
+    } else {
+        b.walls.push({ x: splitX + (doorSize/2), y: splitY, w: (b.x + b.w) - (splitX + doorSize/2), h: thickness });
+    }
 }
 
 function generateTerrain() {
     terrain = [];
-    for(let i=0; i<100; i++) {
-        terrain.push({
-            x: Math.random() * mapSize, y: Math.random() * mapSize,
-            w: 100 + Math.random() * 300, h: 100 + Math.random() * 300,
-            color: Math.random() > 0.5 ? '#1e1a15' : '#1a1814'
-        });
+    buildings = [];
+    let attempts = 0;
+    const roadCenter = mapSize / 2;
+
+    // Background patches
+    for(let i=0; i<80; i++) {
+        let tx = Math.random() * mapSize;
+        let ty = Math.random() * mapSize;
+        // Keep patches off the main roads
+        if (Math.abs(tx - roadCenter) > 150 && Math.abs(ty - roadCenter) > 150) {
+            terrain.push({
+                x: tx, y: ty,
+                w: 100 + Math.random() * 300, h: 100 + Math.random() * 300,
+                color: Math.random() > 0.5 ? '#1e1a15' : '#1a1814'
+            });
+        }
     }
+
+    // Generate 8-10 Large Buildings
+    while(buildings.length < 10 && attempts < 500) {
+        attempts++;
+        let bW = 500 + Math.random() * 200;
+        let bH = 500 + Math.random() * 200;
+        let bx = Math.random() * (mapSize - bW);
+        let by = Math.random() * (mapSize - bH);
+
+        // Don't block the roads
+        if (Math.abs(bx - roadCenter) < 250 || Math.abs(by - roadCenter) < 250) continue;
+
+        // Don't overlap other buildings
+        let overlap = buildings.some(o => bx < o.x + o.w + 100 && bx + bW > o.x - 100 && by < o.y + o.h + 100 && by + bH > o.y - 100);
+        if (overlap) continue;
+
+        let b = { x: bx, y: by, w: bW, h: bH, color: '#333' };
+        generateBuildingInternals(b); 
+        buildings.push(b);
+    }
+    console.log(`Map generated with ${buildings.length} buildings after ${attempts} attempts.`);
 }
 
 init();
