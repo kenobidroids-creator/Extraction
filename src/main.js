@@ -166,6 +166,9 @@ function renderMarket() {
 function startMatch() {
     gameState = "MATCH";
     generateTerrain();
+    if ('ontouchstart' in window) {
+    document.getElementById('mobile-controls').style.display = 'block';
+}
 
     // Reset player state for the new match
     player.x = 1500; player.y = 1500;
@@ -200,7 +203,8 @@ function startMatch() {
         looted: false 
     });
 
-    scavengers = []; // Clear any old enemies from previous matches
+}
+scavengers = []; // Clear any old enemies from previous matches
     
     // Spawn 15 scavengers near random loot chests
     for (let i = 0; i < 15; i++) {
@@ -210,8 +214,6 @@ function startMatch() {
             scavengers.push(new Scavenger(chest.x + 50, chest.y + 50));
         }
     }
-
-}
 
     document.getElementById('bunker-ui').style.display = 'none';
     document.getElementById('match-ui').style.display = 'block';
@@ -441,10 +443,12 @@ function updateAmmoUI() {
 function checkInteractions(dt) {
     let nearChest = false;
     chests.forEach(c => {
+        // Check if player is near AND if they just tapped the chest's screen position
+    let distToPlayer = Math.hypot(c.x - player.x, c.y - player.y);
         if(!c.looted && Math.hypot(c.x - player.x, c.y - player.y) < 50) {
             nearChest = true;
             document.getElementById('prompt').innerText = `[E] LOOT ${c.item.name}`;
-            if(Input.keys['e']) {
+            if(Input.isFiring ||Input.keys['e']) {
                 player.pockets.push(c.item);
                 updateAmmoUI();
                 updateEquippedUI();
@@ -553,6 +557,15 @@ function updatePocketsUI() {
         
         slot.title = "Right-click to drop"; // Helpful hint for players
         barEl.appendChild(slot);
+
+        let lastTap = 0;
+slot.addEventListener('touchstart', (e) => {
+    let now = Date.now();
+    if (now - lastTap < 300) { // 300ms window for double tap
+        dropItem(index);
+    }
+    lastTap = now;
+});
         });
     }
 }
