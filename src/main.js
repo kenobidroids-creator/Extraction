@@ -16,6 +16,7 @@ let buildings = [];
 let extractZone = { x: 200, y: 200, size: 150, timer: 0 };
 let stash = JSON.parse(localStorage.getItem('permanent_stash') || "[]");
 let currency = parseInt(localStorage.getItem('currency')) || 500;
+const lootBtn = document.getElementById('mobile-loot-btn');
 
 // --- GLOBAL UI FUNCTIONS ---
 window.showTab = function(tabName) {
@@ -442,41 +443,42 @@ function updateAmmoUI() {
 
 function checkInteractions(dt) {
     let nearChest = false;
+    let targetChest = null;
+
+    // 1. HANDLE LOOTING
     chests.forEach(c => {
-        // Check if player is near AND if they just tapped the chest's screen position
-    let distToPlayer = Math.hypot(c.x - player.x, c.y - player.y);
-        if(!c.looted && Math.hypot(c.x - player.x, c.y - player.y) < 50) {
+        if (c.looted) return;
+        if (Math.hypot(c.x - player.x, c.y - player.y) < 80) {
             nearChest = true;
-            document.getElementById('prompt').innerText = `[E] LOOT ${c.item.name}`;
-            if(Input.isFiring ||Input.keys['e']) {
-                player.pockets.push(c.item);
-                updateAmmoUI();
-                updateEquippedUI();
-                
-                // AUTO-EQUIP: If we have no weapon, equip this pick-up immediately
-                if (c.item.type === 'weapon' && !gear.weapon) {
-                    gear.weapon = c.item;
-                    player.pockets.pop(); // Remove from pockets since it's now gear
-                }
-                
-                c.looted = true;
-                updatePocketsUI();
-                updateAmmoUI()
-                updateEquippedUI();
-            }
+            targetChest = c;
         }
     });
 
-    if(!nearChest) {
-        let distEx = Math.hypot(extractZone.x - player.x, extractZone.y - player.y);
-        if(distEx < extractZone.size) {
-            extractZone.timer += dt;
-            document.getElementById('prompt').innerText = `EXTRACTING: ${Math.ceil(5 - extractZone.timer)}s`;
-            if(extractZone.timer >= 5) finishMatch(true);
-        } else {
-            extractZone.timer = 0;
-            document.getElementById('prompt').innerText = "";
+    if (nearChest) {
+        document.getElementById('prompt').innerText = `NEAR ${targetChest.item.name}`;
+        if (lootBtn) lootBtn.style.display = 'block';
+        
+        // Mobile button tap
+        if (lootBtn) lootBtn.onclick = () => { lootItem(targetChest); };
+        // PC 'E' key
+        if (Input.keys['e']) lootItem(targetChest);
+    } else {
+        if (lootBtn) lootBtn.style.display = 'none';
+        document.getElementById('prompt').innerText = "";
+    }
+
+    
+
+    // 3. HANDLE EXTRACTION
+    let distToExtract = Math.hypot(player.x - extractZone.x, player.y - extractZone.y);
+    if (distToExtract < extractZone.size) {
+        extractZone.timer += dt;
+        document.getElementById('prompt').innerText = `EXTRACTING: ${Math.ceil(5 - extractZone.timer)}s`;
+        if (extractZone.timer >= 5) {
+            finishMatch(true); 
         }
+    } else {
+        if (!nearChest) extractZone.timer = 0;
     }
 }
 
@@ -592,6 +594,23 @@ function dropItem(index) {
         updateAmmoUI(); // Update in case you dropped your current ammo type
         document.getElementById('prompt').innerText = "DROPPED " + item.name;
     }
+}
+
+function lootItem(c) {
+    if (!c || c.looted) return;
+    
+    player.pockets.push(c.item);
+    
+    // Auto-equip weapon if slot is empty
+    if (c.item.type === 'weapon' && !gear.weapon) {
+        gear.weapon = c.item;
+        player.pockets.pop(); 
+    }
+    
+    c.looted = true;
+    updatePocketsUI();
+    updateAmmoUI();
+    updateEquippedUI();
 }
 
 function finishMatch(success) {
